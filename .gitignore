@@ -1,0 +1,38 @@
+# Credenciais e segredos (NUNCA versionar)
+gcp/
+credenciais.json
+*.json.key
+.env
+.env.*
+!.env.example
+
+# Dados baixados
+data/
+*.csv
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+
+# Testes e qualidade
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Prefect
+.prefectignore
+.prefect/
+
+# IDE e sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

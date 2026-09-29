@@ -1,0 +1,5 @@
+pandas
+pandas-gbq
+google-cloud-bigquery
+requests
+prefect>=3.0
