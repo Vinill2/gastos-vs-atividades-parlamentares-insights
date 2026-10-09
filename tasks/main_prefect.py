@@ -45,6 +45,18 @@ def pipeline_legislativo(anos: list[str] = ["2026"]):
 
         df = tarefa_unir(dfs)
         df = tarefa_transformar(df, config["etapas_transform"])
+        for coluna in df.columns:
+            tipos = df[coluna].dropna().map(type).value_counts()
+
+            logger.info(
+                "COLUNA=%s | dtype=%s | tipos=%s",
+                coluna,
+                df[coluna].dtype,
+                {
+                    tipo.__name__: quantidade
+                    for tipo, quantidade in tipos.items()
+                },
+            )
         tarefa_carregar(df, config["tabela"], config["schema"])
 
         logger.info("Dataset %s finalizado com sucesso", chave_dataset)

@@ -1,290 +1,238 @@
-# Câmara Legislativo ETL
+# Gastos vs Atividades Parlamentares
 
-Pipeline de engenharia de dados que extrai, transforma e carrega dados públicos da Câmara dos Deputados Brasileira para o Google BigQuery.
+Pipeline de dados que coleta os dados abertos da Câmara dos Deputados, transforma e carrega no Google BigQuery, e alimenta um dashboard no Looker Studio sobre a relação entre gastos com a cota parlamentar e a atividade legislativa dos deputados.
 
-## 📋 Problema e Objetivo
+![CI](https://github.com/Vinill2/gastos-vs-atividades-parlamentares-insights/actions/workflows/ci.yml/badge.svg)
 
-A Câmara dos Deputados disponibiliza dados abertos sobre proposições, autores, temas, gastos parlamentares e deputados. Este projeto automatiza a ingestão, transformação e armazenamento desses dados em um data warehouse, criando uma base consolidada para análises sobre o comportamento legislativo.
+## Pergunta do projeto
 
-**Perguntas que esse projeto responde:**
-- Qual é o perfil de gastos de cada deputado?
-- Quais são os temas mais debatidos no legislativo?
-- Qual é a distribuição de proposições por partido e estado?
-- Qual é o padrão de tramitação das proposições?
+> Existe relação entre quanto um deputado gasta com a cota parlamentar e quantas proposições ele apresenta?
 
-## 🏗️ Arquitetura
+Os gráficos do dashboard respondem essa pergunta em camadas, do resumo ao detalhe:
+
+| Elemento | O que mostra | Como responde a pergunta |
+|---|---|---|
+| **Correlação (0,17)** | Coeficiente de Pearson entre total gasto e número de autorias por deputado | Resposta direta: a correlação é fraca |
+| **Texto explicativo** | Interpretação do coeficiente | Traduz 0,17 em linguagem simples |
+| **Deputados, proposições, total gasto** | Volume geral: 638 deputados, 274.079 autorias, R$ 623 milhões gastos | Dá escala aos números seguintes |
+| **Custo médio por proposição e por deputado** | Total gasto dividido por autorias e por deputado | Mostra quanto custa, em média, cada autoria e cada deputado |
+| **Distribuição de Total Gasto por proposições** | Gráfico de dispersão: cada ponto é um deputado; as linhas tracejadas são as médias | Permite ver a correlação com os próprios dados. A maioria dos deputados fica concentrada perto da média de proposições e com gastos baixos, e poucos casos fogem do padrão |
+| **Proposições descrição x Qtd** | Quantidade de cada tipo de proposição (projeto de lei, parecer, requerimento etc.) | Mostra o tipo de atividade legislativa produzida, que é o outro lado da comparação |
+| **Descrição de Gastos x Total** | Categorias de gasto (passagens, combustíveis, locação de veículos etc.) e o valor de cada uma | Mostra para onde vai o dinheiro, que é o lado dos gastos da comparação |
+
+**Período dos dados:** os dados foram obtidos para os anos definidos no código, na chamada do flow (`pipeline_legislativo(anos=[...])`). Até 4 anos podem ser carregados por execução.
+
+## Dashboard
+
+![Dashboard](docs/dashboard.png)
+
+**Leitura:** a correlação de 0,17 indica baixo nível de relação linear entre gastos e autorias. Ou seja, deputados que gastam mais não apresentam necessariamente mais proposições. Como o cálculo usa 638 deputados, alguns casos extremos influenciam o valor (ver [Limitações](#limitações-conhecidas)).
+
+## Arquitetura
 
 ```
-┌─────────────────────────┐
-│  API Dados Abertos      │
-│  Câmara dos Deputados   │
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  Download (CSV/ZIP)     │
-│  requests + zipfile     │
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  Transform              │
-│  pandas + validações    │
-│  (tipos, nulos, IDs)    │
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  BigQuery               │
-│  5 tabelas              │
-│  (schemas validados)    │
-└─────────────────────────┘
+API Dados Abertos (Câmara)
+        │
+        ▼
+Download (requests, cache de 24h)
+        │
+        ▼
+Extração (pandas, separador ;)
+        │
+        ▼
+Transformação (seleção, tipos, nulos, IDs)
+        │
+        ▼
+União dos anos (até 4 por execução)
+        │
+        ▼
+BigQuery: 4 tabelas  ──►  4 views de análise  ──►  Looker Studio
 ```
 
-## 🛠️ Stack Técnico
+A orquestração é feita com **Prefect 2**. Os datasets são descritos em `tasks/scripts/config.py`, então adicionar uma nova fonte é, em grande parte, adicionar uma entrada na configuração.
 
-| Componente | Ferramenta |
-|-----------|-----------|
-| **Orquestração** | Prefect 2.x |
-| **Processamento** | pandas, pandas-gbq |
-| **Cloud** | Google BigQuery, Google Cloud Storage |
-| **Linguagem** | Python 3.10+ |
-| **Controle de versão** | Git + GitHub |
+## Dados
 
-## 📊 Dados
+| Tabela | Fonte | Granularidade | Coluna `ano` | Observação |
+|---|---|---|---|---|
+| `proposicoes` | `proposicoes-{ano}.csv` | Uma linha por proposição | Sim | `dataApresentacao` convertida para DATE |
+| `proposicoes_autores` | `proposicoesAutores-{ano}.csv` | Uma linha por autor por proposição | Sim | Não tem data própria; o ano vem da carga |
+| `gastos_parlamentares` | `Ano-{ano}.csv.zip` | Uma linha por despesa | Sim | `vlrLiquido` em NUMERIC (precisão financeira) |
+| `deputados` | `deputados.csv` | Um deputado | Não | Arquivo único, baixado uma vez por execução |
 
-O pipeline processa **5 datasets** da Câmara:
+A coluna `ano` é adicionada à seleção de cada dataset anual, então é possível filtrar por período mesmo depois da união dos anos.
 
-| Dataset | Descrição | Frequência |
-|---------|-----------|-----------|
-| **proposicoes** | Proposições legislativas com status e tramitação | Anual |
-| **proposicoes_autores** | Autores das proposições (deputados/blocos) | Anual |
-| **proposicoes_temas** | Temas associados às proposições com relevância | Anual |
-| **gastos_parlamentares** | Despesas com cota parlamentar | Anual |
-| **deputados** | Dados cadastrais dos deputados | Sem versionamento (atualizado) |
+## Views no BigQuery
 
-## 🚀 Como Rodar
+As views ficam no BigQuery e refletem sempre a última carga das tabelas. As definições estão em [`sql/views.sql`](sql/views.sql).
+
+| View | O que faz | Usada em |
+|---|---|---|
+| `vw_deputados_resumo` | Por deputado: total gasto e número de autorias | Base da correlação e dos custos médios |
+| `vw_correlacao_kpi` | Correlação de Pearson entre total gasto e autorias | Card de correlação |
+| `vw_gastos_com_join` | Gastos com o nome do deputado | Tabela de gastos por descrição |
+| `vw_proposicoes_com_join` | Autorias com a descrição do tipo da proposição | Tabela de proposições por tipo |
+
+## Métricas do dashboard
+
+| Card | Cálculo |
+|---|---|
+| Deputados | Número de deputados em `vw_deputados_resumo` |
+| Proposições | Total de autorias de deputados (linhas de `proposicoes_autores` com `idDeputadoAutor`). Um projeto com 3 autores conta 3 |
+| Total gasto | Soma de `vlrLiquido` |
+| Custo médio por proposição | Total gasto ÷ autorias |
+| Custo médio por deputado | Total gasto ÷ deputados |
+| Correlação | `CORR(total_Gasto, proposicoes)` em `vw_correlacao_kpi` |
+
+## Como executar
+
+Todo o ambiente roda em **Docker**. Você não precisa instalar Python nem as bibliotecas do projeto na sua máquina.
 
 ### Pré-requisitos
 
-- Python 3.10+
-- Conta no Google Cloud com BigQuery habilitado
-- Service Account com credenciais JSON
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e em execução
+- Projeto no Google Cloud com a API do BigQuery habilitada
+- Arquivo JSON de uma service account com as permissões **BigQuery Data Editor** e **BigQuery Job User**
 
-### 1. Configuração inicial
+### Passo a passo
 
-Clone o repositório:
+**1. Coloque a credencial no projeto**
+
+Salve o JSON da service account em `gcp/credenciais.json`. Esse arquivo não é versionado.
+
+**2. Configure as variáveis**
+
 ```bash
-git clone <seu-repo>
-cd legislativo_etl
+cp .env.docker.example .env.docker
 ```
 
-Crie um ambiente virtual:
-```bash
-python -m venv venv
-venv\Scripts\activate  # Windows
-# ou
-source venv/bin/activate  # Linux/Mac
-```
+Edite `.env.docker` com o seu projeto e dataset:
 
-Instale as dependências:
 ```bash
-pip install -r requirements.txt
-```
-
-### 2. Variáveis de ambiente
-
-Copie o arquivo de exemplo:
-```bash
-cp .env.example .env
-```
-
-Preencha com seus valores:
-```bash
-# .env
-GOOGLE_APPLICATION_CREDENTIALS=./gcp/credenciais.json
 BQ_PROJECT=seu-projeto-gcp
 BQ_DATASET=desafio_legislativo_2026
-DADOS_DIR=./data/camara_leg_csv
-URL_BASE=https://dadosabertos.camara.leg.br/arquivos
 ```
 
-Coloque o JSON das credenciais do Google Cloud em `gcp/credenciais.json`.
+**3. Suba os contêineres**
 
-### 3. Executar o pipeline
-
-**Localmente (sem Prefect UI):**
 ```bash
+docker-compose up -d
+```
+
+**4. Acompanhe a execução**
+
+Abra http://localhost:4200 para ver o flow no Prefect.
+
+**5. Crie as views**
+
+Execute `sql/views.sql` no console do BigQuery, de cima para baixo.
+
+**6. Para encerrar**
+
+```bash
+docker-compose down
+```
+
+### O que é instalado no Docker
+
+- **Imagem oficial do Prefect Server:** interface e API de orquestração.
+- **Imagem do projeto** (Python 3.11), com as bibliotecas de `requirements.txt`: pandas, pandas-gbq, pyarrow, prefect, google-cloud-bigquery e requests.
+
+### Execução sem Docker (desenvolvimento)
+
+Para quem quer rodar o código direto na máquina, é preciso Python 3.10 ou 3.11:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Linux/Mac
+
+pip install -r requirements.txt
+
 cd tasks
-python main_prefect.py
+python -c "from main_prefect import pipeline_legislativo; pipeline_legislativo(anos=['2025', '2026'])"
 ```
 
-**Com Prefect (recomendado para desenvolvimento):**
-```bash
-cd tasks
-prefect server start  # em outro terminal
-python main_prefect.py
-# Acesse http://localhost:4200 para ver a UI
-```
+Nesse modo, é preciso definir `GOOGLE_APPLICATION_CREDENTIALS` com o caminho absoluto do JSON, além de `BQ_PROJECT` e `BQ_DATASET`. Use o `.env.example` como modelo.
 
-**Especificar ano:**
-```bash
-# Por padrão, roda para 2026
-# Para mudar, edite o ano em main_prefect.py ou use variáveis de ambiente
-```
-
-### 4. Rodar testes
+### Testes
 
 ```bash
-pytest tests/ -v
+pip install pytest pytest-cov
+pytest -v
 ```
 
-Com cobertura:
-```bash
-pytest tests/ --cov=scripts --cov-report=html
-```
+Os testes não acessam a internet nem o BigQuery. Download, `requests` e `to_gbq` são substituídos por mocks. O `get_run_logger()` do Prefect também é substituído nos testes, por uma fixture em `tests/conftest.py`.
 
-## 📁 Estrutura do Projeto
+A cada `push` e `pull request`, o GitHub Actions roda os testes em Python 3.10 e 3.11 (`.github/workflows/ci.yml`).
+
+## Por que carga completa e não incremental
+
+O pipeline recria as tabelas inteiras a cada execução (`if_exists="replace"`), em vez de acrescentar só o que é novo. Isso é uma decisão deliberada, e o motivo é que os dados mudam depois de publicados:
+
+- **Campos de status mudam.** Em `proposicoes`, campos como `ultimoStatus_descricaoSituacao` e `ultimoStatus_dataHora` são atualizados conforme a proposição tramita. Uma proposição de 2025 pode ter situação diferente hoje.
+- **Anos passados também mudam.** Um arquivo de um ano já encerrado pode receber correções ou novos registros. Por isso o pipeline não trata um ano antigo como imutável.
+- **Consistência.** Recarregar tudo garante que as tabelas e as views reflitam a mesma versão dos dados. Uma carga incremental poderia misturar registros de versões diferentes.
+
+A contrapartida é que toda execução reescreve todas as linhas dos anos informados. Por isso o limite é de 4 anos por execução, e o custo cresce com o volume. Também significa que **a execução define o conjunto de anos da tabela**: rodar só `anos=["2026"]` remove 2025 das tabelas. Para manter vários anos, a execução precisa informar todos eles.
+
+Se o volume crescer, a evolução natural é carregar anos antigos apenas quando houver mudança, usando uma coluna de data de atualização como critério.
+
+## Decisões técnicas
+
+- **Configuração declarativa.** Cada dataset define URL, arquivo, tabela, schema e etapas de transformação. O flow não tem lógica específica por dataset.
+- **Transformações reutilizáveis.** Funções genéricas (`converter_data`, `normalizar_nulos`, `extrair_id`, etc.) são combinadas por dataset em `steps_transform.py`.
+- **Cache de download de 24 horas.** A Câmara atualiza os dados diariamente, então baixar o mesmo arquivo mais de uma vez por dia não traz nenhuma informação nova. Com 24 horas, cada arquivo é baixado no máximo uma vez por dia. A contrapartida é que uma execução pode usar dados de até um dia antes da publicação. Arquivo vazio nunca conta como válido, para que um download interrompido não seja reaproveitado.
+- **Validação antes do envio.** Cada coluna é convertida pelo PyArrow antes da carga. Um tipo inconsistente falha com o nome da coluna, em vez de falhar no meio do envio ao BigQuery.
+- **Credenciais sob demanda.** O arquivo da service account só é lido na hora da carga, então importar o módulo ou rodar os testes não exige credenciais.
+- **Decimais em NUMERIC.** Valores financeiros são convertidos para `Decimal` e gravados como NUMERIC, sem arredondamento de ponto flutuante.
+- **Views em vez de tabelas agregadas.** As análises são calculadas sob demanda, então o dashboard sempre reflete a última carga.
+
+## Limitações conhecidas
+
+- **Junções internas.** `vw_deputados_resumo` e `vw_gastos_com_join` usam `JOIN`. Deputados sem gasto, ou gastos cujo `ideCadastro` não corresponde a nenhum deputado, ficam fora das análises.
+- **"Proposições" são autorias.** O card conta linhas de autoria, não proposições distintas. Um projeto com vários autores aparece várias vezes.
+- **Pearson é sensível a outliers.** A correlação de 0,17 é calculada sobre 638 deputados, e alguns casos extremos pesam no resultado. Uma correlação de Spearman (baseada em postos) seria menos afetada por eles.
+- **Dependência do formato da Câmara.** Se a API mudar nomes ou ordem de colunas, o pipeline falha. As seleções são explícitas, então o erro aparece logo na transformação.
+
+## Estrutura do projeto
 
 ```
 legislativo_etl/
-├── tasks/
-│   ├── main_prefect.py              # Flow principal (orquestração)
-│   └── scripts/
-│       ├── __init__.py
-│       ├── config.py                # Configuração dos datasets
-│       ├── download.py              # Download de arquivos
-│       ├── pipeline.py              # Funções de extract e load
-│       ├── schemas.py               # Esquemas BigQuery
-│       ├── steps_transform.py       # Definição das etapas
-│       └── transform.py             # Funções de transformação
-├── tests/
-│   ├── __init__.py
-│   └── test_transform.py            # Testes das transformações
+├── .github/workflows/ci.yml     # CI: testes em 3.10 e 3.11
+├── docs/
+│   └── dashboard.png            # captura do dashboard
 ├── gcp/
-│   └── credenciais.json             # (gitignored)
-├── data/                            # CSVs baixados (gitignored)
-├── .env                             # Variáveis locais (gitignored)
-├── .env.example                     # Modelo de variáveis
-├── .gitignore
+│   └── credenciais.json         # não versionado
+├── sql/
+│   └── views.sql                # definição das views no BigQuery
+├── tasks/
+│   ├── main_prefect.py          # flow principal
+│   └── scripts/
+│       ├── config.py            # datasets, variáveis de ambiente, limite de anos
+│       ├── download.py          # download, ZIP e cache
+│       ├── pipeline.py          # extração, união e carga no BigQuery
+│       ├── schemas.py           # schemas das tabelas no BigQuery
+│       ├── steps_transform.py   # sequência de transformações por dataset
+│       └── transform.py         # funções de transformação
+├── tests/                       # testes unitários com mocks
+├── .dockerignore
+├── .env.docker.example
+├── .env.example
+├── Dockerfile
+├── docker-compose.yml
+├── pytest.ini
 ├── requirements.txt
 └── README.md
 ```
 
-## 🔄 Fluxo de Dados
+## Próximos passos
 
-### Etapas do Pipeline
+- Agendamento diário no Prefect, para atualizar os dados sem execução manual
+- Validação dos dados após a carga (contagem mínima de linhas, nulos em `id`)
+- Carga incremental com critério de data de atualização, se o volume crescer
+- Modelagem das views com dbt
 
-1. **Download** (`download.py`)
-   - Baixa CSVs da API ou descompacta ZIPs
-   - Valida se arquivo foi criado e não está vazio
+## Autor
 
-2. **Extract** (`pipeline.py::extrair`)
-   - Lê CSV com pandas (separador `;`)
-   - Valida se dataframe não está vazio
-
-3. **Transform** (`transform.py`)
-   - **Seleção**: escolhe colunas relevantes
-   - **Conversão de tipos**: datas, datetimes, números, decimais
-   - **Normalização**: trata nulos, extrai IDs de URIs
-   - Cada dataset tem suas transformações específicas (em `steps_transform.py`)
-
-4. **Load** (`pipeline.py::carregar_bigquery`)
-   - Carrega no BigQuery com schema validado
-   - Modo `replace` (sobrescreve tabela inteira)
-
-### Exemplo de Transformação
-
-```python
-# Entrada: proposicoes_temas (com URI como string)
-uriProposicao,tema,relevancia
-http://...camara.leg.br/proposicoes/123,Saúde,0.95
-http://...camara.leg.br/proposicoes/456,Educação,0.87
-
-# Saída (após transform)
-uriProposicao,tema,relevancia,id
-http://...camara.leg.br/proposicoes/123,Saúde,0.95,123
-http://...camara.leg.br/proposicoes/456,Educação,0.87,456
-```
-
-## 🎯 Decisões Técnicas
-
-### 1. Configuração Declarativa
-Os datasets são configurados em `config.py` com URLs, caminhos, schemas e transformações. Isso permite adicionar novos datasets sem alterar a lógica do flow.
-
-### 2. Modo `replace` no BigQuery
-Cada execução sobrescreve a tabela inteira. **Alternativas futuras:**
-- Append com coluna `ano` para manter histórico
-- Particionamento por data
-- Merge incremental (upsert)
-
-### 3. Transformações Reutilizáveis
-Funções genéricas (`converter_data`, `normalizar_nulos`, etc.) são compostas em pipelines por dataset. Facilita testes e manutenção.
-
-### 4. Logs no Prefect
-Usa `get_run_logger()` para exibir progresso na UI do Prefect, essencial para monitoramento em produção.
-
-### 5. Validações em Camadas
-- **Download**: verifica se arquivo existe e não está vazio
-- **Extract**: valida se dataframe não está vazio
-- **Transform**: converte tipos com `errors="coerce"` (NaN em caso de erro)
-- **Load**: schema do BigQuery força tipos
-
-## 📈 Próximos Passos
-
-### Curto prazo (Diferencial no portfolio)
-- [ ] **Testes expandidos** (Parte 4)
-  - Cobertura > 80% com pytest
-  - CI/CD no GitHub Actions
-- [ ] **Dashboard Looker Studio** (Parte 6)
-  - Análises dos dados
-  - Gastos por deputado, temas mais frequentes
-
-### Médio prazo
-- [ ] **Agendamento** (Parte 7)
-  - Cron diário no Prefect
-- [ ] **Containerização** (Parte 8)
-  - Dockerfile para reprodutibilidade
-- [ ] **Modelo de dados** com dbt
-  - Camada de staging e marts
-  - Documentação automática
-
-### Longo prazo
-- [ ] Incremental loading (não sobrescrever tudo)
-- [ ] Data quality checks com Great Expectations
-- [ ] Alertas de falha (Slack, email)
-- [ ] Versionamento de dados
-
-## 🐛 Troubleshooting
-
-### Erro: `FileNotFoundError` ao baixar
-- Verifique se a URL em `config.py` ainda é válida
-- A API da Câmara pode ter mudado o endpoint
-
-### Erro: `PermissionError` no BigQuery
-- Confirme que a service account tem role `BigQuery Data Editor`
-- Verifique se `GOOGLE_APPLICATION_CREDENTIALS` aponta pro JSON correto
-
-### Erro: `MissingContextError` nos testes
-- O `get_run_logger()` só funciona dentro de um Prefect flow/task
-- Use o try/except sugerido em `transform.py` para rodar testes
-
-### CSV vazio após download
-- Confirme a URL em `config.py`
-- Teste manualmente: `requests.get(url).status_code`
-
-## 📚 Referências
-
-- [Dados Abertos Câmara](https://dadosabertos.camara.leg.br/)
-- [Prefect Docs](https://docs.prefect.io/)
-- [pandas-gbq](https://pandas-gbq.readthedocs.io/)
-- [Google BigQuery Python Client](https://googleapis.dev/python/bigquery/latest/)
-
-## 📝 Licença
-
-MIT License - veja `LICENSE` (se aplicável)
-
----
-
-**Autor:** [Seu Nome]  
-**Última atualização:** Setembro 2026
+Vinicius Lemos ([@Vinill2](https://github.com/Vinill2))

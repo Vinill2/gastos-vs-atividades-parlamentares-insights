@@ -2,7 +2,8 @@ import io
 import os
 import zipfile
 from prefect import get_run_logger
-import requests    
+import requests
+import time
 
 
 def e_csv(nome_arquivo):
@@ -29,11 +30,34 @@ def validar_arquivo(destino):
         )
 
 
+def arquivo_recente(destino, horas=24):
+    if not os.path.exists(destino):
+        return False
+
+    ultima_modificacao = os.path.getmtime(destino)
+    idade_horas = (time.time() - ultima_modificacao) / 3600
+
+    return idade_horas < horas
+
+
 def baixar_arquivo(url, destino, compactado=False):
     logger = get_run_logger()
+
+    if arquivo_recente(destino, horas=24):
+        logger.info(
+            "Arquivo encontrado e atualizado nas últimas 24 horas. "
+            "Usando arquivo existente: %s",
+            destino,
+        )
+
+        validar_arquivo(destino)
+
+        return destino
+
+    logger.info("Arquivo não encontrado ou está desatualizado.")
     logger.info("Iniciando download: %s", url)
 
-    resposta = requests.get(url, timeout=120)
+    resposta = requests.get(url, timeout=1200)
     resposta.raise_for_status()
 
     diretorio = os.path.dirname(destino)

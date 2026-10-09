@@ -18,7 +18,7 @@ TRANSFORM_PROPOSICOES = [
     ),
     (
         "converter_data",
-        ["dataApresentacao"],
+        ["dataApresentacao",],
     ),
     (
         "converter_datetime",
@@ -56,7 +56,7 @@ TRANSFORM_GASTOS_PARLAMENTARES = [
     ),
     (
         "converter_numero",
-        ["ideCadastro"],
+        ["ideCadastro","numAno"],
     ),
     (
         "converter_datetime",

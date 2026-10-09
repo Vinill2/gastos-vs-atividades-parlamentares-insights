@@ -1,0 +1,14 @@
+.git
+.gitignore
+.github
+__pycache__
+.pytest_cache
+.venv
+venv
+*.pyc
+.DS_Store
+.env
+gcp/credenciais.json
+data/
+.idea
+.vscode

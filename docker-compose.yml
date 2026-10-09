@@ -1,0 +1,57 @@
+version: '3.9'
+
+services:
+  # Prefect Server (UI e API)
+  prefect-server:
+    image: prefecthq/prefect:2-latest
+    container_name: prefect-server
+    command: prefect server start --host 0.0.0.0
+    ports:
+      - "4200:4200"
+    environment:
+      - PREFECT_API_URL=http://prefect-server:4200/api
+      - PREFECT_UI_URL=http://localhost:4200
+    volumes:
+      - prefect-data:/root/.prefect
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - legislativo-network
+
+  # Legislativo ETL Worker (seu código)
+  legislativo-etl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: legislativo-etl
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+    environment:
+      # Prefect
+      - PREFECT_API_URL=http://prefect-server:4200/api
+      # BigQuery
+      - BQ_PROJECT=${BQ_PROJECT}
+      - BQ_DATASET=${BQ_DATASET}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp/credenciais.json
+      - DADOS_DIR=/app/data
+      - URL_BASE=https://dadosabertos.camara.leg.br/arquivos
+    volumes:
+      - C:/prefect/legislativo_etl/gcp/credenciais.json:/app/gcp/credenciais.json:ro
+      - legislativo-data:/app/data
+    networks:
+      - legislativo-network
+    restart: on-failure
+
+volumes:
+  prefect-data:
+    driver: local
+  legislativo-data:
+    driver: local
+
+networks:
+  legislativo-network:
+    driver: bridge

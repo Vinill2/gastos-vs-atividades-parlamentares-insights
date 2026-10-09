@@ -6,7 +6,7 @@ SCHEMA_PROPOSICOES = [
     {"name": "ementaDetalhada", "type": "STRING"},
     {"name": "dataApresentacao", "type": "DATE"},
     {"name": "ultimoStatus_dataHora", "type": "TIMESTAMP"},
-    {"name": "ultimoStatus_sequencia", "type": "STRING"},
+    {"name": "ultimoStatus_sequencia", "type": "INT64"},
     {"name": "ultimoStatus_descricaoTramitacao", "type": "STRING"},
     {"name": "ultimoStatus_idTipoTramitacao", "type": "INT64"},
     {"name": "ultimoStatus_descricaoSituacao", "type": "STRING"},
@@ -25,7 +25,7 @@ SCHEMA_PROPOSICOES_AUTORES = [
 
 
 SCHEMA_GASTOS_PARLAMENTARES = [
-    {"name": "numAno", "type": "INT64"},
+    {"name": "numAno", "type": "STRING"},
     {"name": "ideCadastro", "type": "INT64"},
     {"name": "txtDescricao", "type": "STRING"},
     {"name": "txtFornecedor", "type": "STRING"},

@@ -1,5 +1,13 @@
-pandas
-pandas-gbq
-google-cloud-bigquery
-requests
-prefect>=3.0
+pandas==2.1.4
+pandas-gbq>=0.29.0
+prefect==2.14.21
+python-dotenv==1.0.0
+google-cloud-bigquery==3.13.0
+requests==2.31.0
+griffe<0.39
+google-auth==2.25.2
+
+# Desenvolvimento e testes
+pytest==7.4.3
+pytest-cov==4.1.0
+ruff==0.1.8
