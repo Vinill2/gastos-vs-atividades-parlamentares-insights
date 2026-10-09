@@ -201,7 +201,7 @@ def test_baixar_arquivo_reutiliza_arquivo_recente(tmp_path, monkeypatch):
 def test_baixar_arquivo_baixa_de_novo_se_antigo(tmp_path, monkeypatch):
     arquivo = tmp_path / "dados.csv"
     arquivo.write_text("conteudo antigo")
-    definir_idade(arquivo, horas=10)
+    definir_idade(arquivo, horas=download.HORAS_CACHE + 1)
     simular_get(monkeypatch, RespostaFalsa(content=b"conteudo novo"))
 
     baixar_arquivo("http://teste/dados.csv", str(arquivo))

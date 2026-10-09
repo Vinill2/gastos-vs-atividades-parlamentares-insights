@@ -6,7 +6,7 @@ python-dotenv==1.0.0
 google-cloud-bigquery==3.13.0
 google-auth==2.25.2
 requests==2.31.0
-griffe<0.39
+griffe<0.39 
 
 # Desenvolvimento e testes
 pytest==7.4.3
